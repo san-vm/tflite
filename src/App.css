@@ -53,10 +53,10 @@
 
 .App-header {
 	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-	padding: 30px;
+	padding: 25px;
 	color: white;
 	border-radius: 12px;
-	margin-bottom: 30px;
+	margin-bottom: 20px;
 	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
 
@@ -73,8 +73,9 @@
 
 .container {
 	display: grid;
-	gap: 30px;
+	gap: 10px;
 	grid-template-columns: 1fr;
+	margin-bottom: 20px;
 }
 
 /* Model Loader Styles */
@@ -109,7 +110,7 @@
 	border: 2px solid #ddd;
 	border-radius: 8px;
 	font-size: 16px;
-	background: white;
+	background: #333;
 	cursor: pointer;
 }
 
@@ -185,6 +186,7 @@
 	padding: 25px;
 	border-radius: 12px;
 	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+	margin-bottom: 12px;
 }
 
 .input-mode-selector h3 {
@@ -306,7 +308,7 @@
 /* Webcam Styles */
 .webcam-capture {
 	background: #f8f9fa;
-	padding: 25px;
+	padding: 15px;
 	border-radius: 12px;
 	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
@@ -385,7 +387,7 @@
 
 .webcam-container {
 	position: relative;
-	margin: 20px 0;
+	margin: 20px;
 	display: inline-block;
 }
 

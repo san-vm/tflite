@@ -1,9 +1,9 @@
 import * as tf from '@tensorflow/tfjs';
 
 
-// Preprocess one image to 112x112, returns tensor of shape [1,112,112,3]
-export const preprocessImage = (img, canvas) => {
-	const inputSize = 160;
+// Preprocess one image to 112x112, 160x160 returns tensor of shape [1,112,112,3]
+export const preprocessImage = (img, canvas, size = 160) => {
+	const inputSize = size;
 	canvas.width = inputSize;
 	canvas.height = inputSize;
 	const ctx = canvas.getContext('2d');
@@ -30,45 +30,24 @@ export const preprocessImage = (img, canvas) => {
 	return tensor;
 };
 
-// Preprocess one image to 112x112, returns tensor of shape [1,112,112,3]
-export const preprocessImage112 = (img, canvas) => {
-    const inputSize = 112;
-    canvas.width = inputSize;
-    canvas.height = inputSize;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, inputSize, inputSize);
-
-    const imageData = ctx.getImageData(0, 0, inputSize, inputSize);
-    const pixels = imageData.data;
-    const tensorData = new Float32Array(inputSize * inputSize * 3);
-
-    for (let i = 0; i < pixels.length; i += 4) {
-        const pixelIndex = i / 4;
-        tensorData[pixelIndex * 3] = pixels[i] / 255.0;
-        tensorData[pixelIndex * 3 + 1] = pixels[i + 1] / 255.0;
-        tensorData[pixelIndex * 3 + 2] = pixels[i + 2] / 255.0;
-    }
-    // Shape: [1, 112, 112, 3]
-    return tf.tensor4d(tensorData, [1, inputSize, inputSize, 3]);
-};
 
 // Combine two preprocessed tensors into a batch of shape [2,112,112,3]
-export const preprocessBatchForMobileNet = (img1, img2, canvas) => {
-    const tensor1 = preprocessImage112(img1, canvas); // shape [1,112,112,3]
-    const tensor2 = preprocessImage112(img2, canvas); // shape [1,112,112,3]
-    // Concatenate along 0th axis (batch)
-    const batchTensor = tf.concat([tensor1, tensor2], 0); // shape [2,112,112,3]
-    tensor1.dispose();
-    tensor2.dispose();
-    return batchTensor;
+export const preprocessBatchForMobileNet = (img1, img2, canvas, size = 112) => {
+	const tensor1 = preprocessImage(img1, canvas, size); // shape [1,112,112,3]
+	const tensor2 = preprocessImage(img2, canvas, size); // shape [1,112,112,3]
+	// Concatenate along 0th axis (batch)
+	const batchTensor = tf.concat([tensor1, tensor2], 0); // shape [2,112,112,3]
+	tensor1.dispose();
+	tensor2.dispose();
+	return batchTensor;
 };
 
 // If you only have one image and must duplicate for batch size 2:
-export const preprocessSingleForMobileNet = (img, canvas) => {
-    const tensor = preprocessImage112(img, canvas); // shape [1,112,112,3]
-    const batchTensor = tf.concat([tensor, tensor], 0); // shape [2,112,112,3]
-    tensor.dispose();
-    return batchTensor;
+export const preprocessSingleForMobileNet = (img, canvas, size = 112) => {
+	const tensor = preprocessImage(img, canvas, size); // shape [1,112,112,3]
+	const batchTensor = tf.concat([tensor, tensor], 0); // shape [2,112,112,3]
+	tensor.dispose();
+	return batchTensor;
 };
 
 

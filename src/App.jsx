@@ -93,33 +93,36 @@ function App() {
 
 			<div className="container">
 				{/* Model Selection and Loading */}
-				<ModelLoader
-					models={models}
-					selectedModel={selectedModel}
-					setSelectedModel={setSelectedModel}
-					loadModel={loadModel}
-					isLoading={isLoading}
-					error={error}
-				/>
-
-				{/* Input Mode Selection */}
-				<div className="input-mode-selector">
-					<h3>Input Mode</h3>
-					<div className="mode-buttons">
-						<button
-							className={inputMode === 'image' ? 'active' : ''}
-							onClick={() => setInputMode('image')}
-						>
-							Image Upload
-						</button>
-						<button
-							className={inputMode === 'webcam' ? 'active' : ''}
-							onClick={() => setInputMode('webcam')}
-						>
-							Webcam
-						</button>
+				<div>
+					{/* Input Mode Selection */}
+					<div className="input-mode-selector">
+						<h3>Input Mode</h3>
+						<div className="mode-buttons">
+							<button
+								className={inputMode === 'image' ? 'active' : ''}
+								onClick={() => setInputMode('image')}
+							>
+								Image Upload
+							</button>
+							<button
+								className={inputMode === 'webcam' ? 'active' : ''}
+								onClick={() => setInputMode('webcam')}
+							>
+								Webcam
+							</button>
+						</div>
 					</div>
+
+					<ModelLoader
+						models={models}
+						selectedModel={selectedModel}
+						setSelectedModel={setSelectedModel}
+						loadModel={loadModel}
+						isLoading={isLoading}
+						error={error}
+					/>
 				</div>
+
 
 				{/* Input Components */}
 				{inputMode === 'image' ? (
@@ -127,10 +130,10 @@ function App() {
 				) : (
 					<WebcamCapture model={getCurrentModel()} size={selectedModel === "mobileFaceNet"} />
 				)}
-
-				{/* Face Detection Results */}
-				<FaceDetection />
 			</div>
+
+			{/* Face Detection Results */}
+			<FaceDetection />
 		</div>
 	);
 }
