@@ -30,6 +30,33 @@ export const preprocessImage = (img, canvas, size = 160) => {
 	return tensor;
 };
 
+export const preprocessImageUint8 = (img, canvas, size = 160) => {
+	const inputSize = size;
+	canvas.width = inputSize;
+	canvas.height = inputSize;
+	const ctx = canvas.getContext('2d');
+	ctx.drawImage(img, 0, 0, inputSize, inputSize);
+
+	const imageData = ctx.getImageData(0, 0, inputSize, inputSize);
+	const pixels = imageData.data;
+
+	// Uint8Array or Int32Array (use Int32 to avoid dtype cast error)
+	const tensorData = new Int32Array(inputSize * inputSize * 3);
+
+	for (let i = 0; i < pixels.length; i += 4) {
+		const pixelIndex = i / 4;
+		tensorData[pixelIndex * 3] = pixels[i];       // R
+		tensorData[pixelIndex * 3 + 1] = pixels[i + 1]; // G
+		tensorData[pixelIndex * 3 + 2] = pixels[i + 2]; // B
+	}
+
+	// Use 'int32', which is safe in TF.js and keeps raw pixel values
+	const tensor = tf.tensor4d(tensorData, [1, inputSize, inputSize, 3], 'int32');
+
+	return tensor;
+};
+
+
 
 // Combine two preprocessed tensors into a batch of shape [2,112,112,3]
 export const preprocessBatchForMobileNet = (img1, img2, canvas, size = 112) => {
@@ -68,15 +95,36 @@ export const runInference = async (model, inputTensor) => {
 
 		// Convert tensor to array
 		let outputData;
-		if (prediction.arraySync) {
-			outputData = prediction.arraySync();
-		} else {
+		if (prediction.data) {
 			outputData = await prediction.data();
+		}
+		else if (prediction.arraySync) {
+			outputData = prediction.arraySync();
+		}
+		else {
+			const clssPred = prediction.Identity.arraySync();  // Float32Array(8)
+			const leafNodeMask = prediction.Identity_1.dataSync();  // Float32Array(8)
+
+			// Compute score (matches leaf_score1)
+			let score = 0;
+			for (let i = 0; i < 8; i++) {
+				score += Math.abs(clssPred[i]) * leafNodeMask[i];
+			}
+
+			console.log('clss_pred:', clssPred);
+			console.log('leaf_node_mask:', leafNodeMask);
+			console.log('Liveness score:', score);
+
+			// Classify
+			const isSpoof = score > 0.6;
+			return ([{ score, isSpoof }]);
 		}
 
 		// Clean up tensors
 		inputTensor.dispose();
-		prediction.dispose();
+		if (prediction.dispose) {
+			prediction.dispose();
+		}
 
 		// Return flattened array (face embeddings)
 		return Array.isArray(outputData[0]) ? outputData[0] : Array.from(outputData);

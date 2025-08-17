@@ -18,7 +18,12 @@ const ModelLoader = ({
 			name: 'FaceNet-512',
 			size: '24MB',
 			description: 'High-accuracy face recognition with 512-dimensional embeddings'
-		}
+		},
+		mirnet_int8: {
+			name: 'mirnet_int8',
+			size: '24MB',
+			description: 'High-accuracy face recognition with 512-dimensional embeddings'
+		},
 	};
 
 	return (
@@ -34,6 +39,7 @@ const ModelLoader = ({
 				>
 					<option value="mobileFaceNet">MobileFaceNet (10MB)</option>
 					<option value="faceNet512">FaceNet-512 (24MB)</option>
+					<option value="mirnet_int8">mirnet_int8 (24MB)</option>
 				</select>
 			</div>
 

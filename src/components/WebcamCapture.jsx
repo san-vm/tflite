@@ -35,7 +35,7 @@ const EmbeddingDisplay = React.memo(({ embeddings, timestamp, isRealTime = false
 			<div className="success-results">
 				{displayData.map((value, index) => (
 					<span key={index} className="embedding-value">
-						{typeof value === 'number' ? value.toFixed(4) : value}
+						{typeof value === 'number' ? value.toFixed(4) : typeof value === 'object' ? JSON.stringify(value) : value}
 					</span>
 				))}
 				{embeddings.length > 10 && <span className="more-indicator">... +{embeddings.length - 10}</span>}
@@ -45,7 +45,7 @@ const EmbeddingDisplay = React.memo(({ embeddings, timestamp, isRealTime = false
 });
 
 // Main component optimized for real-time performance
-const WebcamCapture = ({ model, size }) => {
+const WebcamCapture = ({ model, modelName }) => {
 	const [isWebcamActive, setIsWebcamActive] = useState(false);
 	const [capturedImage, setCapturedImage] = useState(null);
 	const [results, setResults] = useState(null);
@@ -80,16 +80,23 @@ const WebcamCapture = ({ model, size }) => {
 				const img = new Image();
 				img.onload = async () => {
 					try {
-						const processedData = size
-							? preprocessSingleForMobileNet(img, canvasRef.current)
-							: preprocessImage(img, canvasRef.current);
+						let processedData;
+						if (modelName === "mobileFaceNet") {
+							processedData = preprocessSingleForMobileNet(img, canvasRef.current);
+						}
+						else if (modelName === "faceNet512") {
+							processedData = preprocessImage(img, canvasRef.current);
+						}
+						else if (modelName === "mirnet_int8") {
+							processedData = preprocessImage(img, canvasRef.current, 400);
+						}
 
 						const inferenceResults = await runInference(model, processedData);
 
 						const result = {
 							success: true,
 							embeddings: inferenceResults,
-							timestamp: Date.now()
+							timestamp: new Date().toISOString(),
 						};
 
 						if (updateResults) {
@@ -118,7 +125,7 @@ const WebcamCapture = ({ model, size }) => {
 			processingRef.current = false;
 			throw err;
 		}
-	}, [model, size]);
+	}, [model, modelName]);
 
 	// Real-time processing loop using requestAnimationFrame
 	const processRealTime = useCallback(() => {

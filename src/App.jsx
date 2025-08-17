@@ -11,7 +11,8 @@ import './App.css';
 function App() {
 	const [models, setModels] = useState({
 		mobileFaceNet: null,
-		faceNet512: null
+		faceNet512: null,
+		mirnet_int8: null,
 	});
 	const [selectedModel, setSelectedModel] = useState('mobileFaceNet');
 	const [isLoading, setIsLoading] = useState(false);
@@ -54,7 +55,11 @@ function App() {
 			let tempModelName = ''
 			if (modelName === 'mobileFaceNet') {
 				tempModelName = 'MobileFaceNet'
-			} else if (modelName === 'faceNet512') {
+			}
+			else if (modelName === 'mirnet_int8') {
+				tempModelName = 'mirnet_int8'
+			}
+			else if (modelName === 'faceNet512') {
 				tempModelName = 'facenet_512'
 			}
 			else {
@@ -126,9 +131,9 @@ function App() {
 
 				{/* Input Components */}
 				{inputMode === 'image' ? (
-					<ImageInput model={getCurrentModel()} size={selectedModel === "mobileFaceNet"} />
+					<ImageInput model={getCurrentModel()} modelName={selectedModel} />
 				) : (
-					<WebcamCapture model={getCurrentModel()} size={selectedModel === "mobileFaceNet"} />
+					<WebcamCapture model={getCurrentModel()} modelName={selectedModel} />
 				)}
 			</div>
 
