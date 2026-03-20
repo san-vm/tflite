@@ -1,4 +1,5 @@
 import React from 'react';
+import { MODEL_OPTIONS, getModelConfig } from '../config/modelRegistry';
 
 const ModelLoader = ({
 	models,
@@ -6,55 +7,44 @@ const ModelLoader = ({
 	setSelectedModel,
 	loadModel,
 	isLoading,
-	error
+	error,
 }) => {
-	const modelInfo = {
-		mobileFaceNet: {
-			name: 'MobileFaceNet',
-			size: '10MB',
-			description: 'Lightweight face recognition model optimized for mobile devices'
-		},
-		faceNet512: {
-			name: 'FaceNet-512',
-			size: '24MB',
-			description: 'High-accuracy face recognition with 512-dimensional embeddings'
-		},
-		mirnet_int8: {
-			name: 'mirnet_int8',
-			size: '24MB',
-			description: 'High-accuracy face recognition with 512-dimensional embeddings'
-		},
-	};
+	const modelInfo = getModelConfig(selectedModel);
+
+	if (!modelInfo) {
+		return null;
+	}
 
 	return (
 		<div className="model-loader">
-			<h3>Model Management</h3>
+			<div className="card-header">
+				<h2>Model Vault</h2>
+				<p>Pick a registered model profile, inspect its contract, and load it into the in-browser runtime.</p>
+			</div>
 
 			<div className="model-selection">
-				<label>Select Model:</label>
+				<label htmlFor="model-select">Select Model:</label>
 				<select
+					id="model-select"
 					value={selectedModel}
-					onChange={(e) => setSelectedModel(e.target.value)}
+					onChange={(event) => setSelectedModel(event.target.value)}
 					disabled={isLoading}
 				>
-					<option value="mobileFaceNet">MobileFaceNet (10MB)</option>
-					<option value="faceNet512">FaceNet-512 (24MB)</option>
-					<option value="mirnet_int8">mirnet_int8 (24MB)</option>
+					{MODEL_OPTIONS.map((modelOption) => (
+						<option key={modelOption.id} value={modelOption.id}>
+							{modelOption.name} ({modelOption.size})
+						</option>
+					))}
 				</select>
 			</div>
 
-			<div className="model-info">
-				<h4>{modelInfo[selectedModel].name}</h4>
-				<p><strong>Size:</strong> {modelInfo[selectedModel].size}</p>
-				<p>{modelInfo[selectedModel].description}</p>
-			</div>
-
-			<div className="model-status">
+				<div className="model-status">
 				<p><strong>Status:</strong>
-					{models[selectedModel] ?
-						<span className="loaded"> Loaded ✅</span> :
-						<span className="not-loaded"> Not Loaded ❌</span>
-					}
+					{models[selectedModel] ? (
+						<span className="loaded"> Loaded</span>
+					) : (
+						<span className="not-loaded"> Not Loaded</span>
+					)}
 				</p>
 
 				<button
@@ -67,9 +57,27 @@ const ModelLoader = ({
 				</button>
 			</div>
 
+			<div className="model-info">
+				<h4>{modelInfo.name}</h4>
+				<p><strong>Size:</strong> {modelInfo.size}</p>
+				<p><strong>Model file:</strong> {`public/models/${modelInfo.fileName}`}</p>
+				<p><strong>Input shape:</strong> {modelInfo.input.shape.join(' x ')}</p>
+				<p><strong>Output mode:</strong> {modelInfo.output.type}</p>
+				<p>{modelInfo.description}</p>
+			</div>
+
+			<div className="model-usage">
+				<h4>Usage Notes</h4>
+				<ul>
+					{modelInfo.documentation.map((note) => (
+						<li key={note}>{note}</li>
+					))}
+				</ul>
+			</div>
+
 			{error && (
 				<div className="error-message">
-					<p>⚠️ {error}</p>
+					<p>{error}</p>
 				</div>
 			)}
 		</div>

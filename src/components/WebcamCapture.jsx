@@ -1,50 +1,101 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Webcam from 'react-webcam';
-import { preprocessImage, preprocessSingleForMobileNet, runInference } from '../utils/modelUtils';
+import { getModelConfig } from '../config/modelRegistry';
+import {
+	prepareModelInput,
+	renderImageOutputToCanvas,
+	runInference,
+} from '../utils/modelUtils';
 
-// Separate component for real-time overlay to prevent unnecessary re-renders
-const RealTimeOverlay = React.memo(({ isActive, embeddings, lastUpdate, fps }) => {
-	if (!isActive) return null;
+const getPreviewPayload = (output) => {
+	if (Array.isArray(output)) {
+		if (typeof output[0] === 'number') {
+			return output.slice(0, 10);
+		}
+
+		if (Array.isArray(output[0])) {
+			return output.slice(0, 2);
+		}
+	}
+
+	return output;
+};
+
+const getRealtimeMetric = (output, outputType) => {
+	if (outputType === 'embeddings') {
+		return {
+			label: 'Dims',
+			value: output?.length ?? 'N/A',
+		};
+	}
+
+	if (Array.isArray(output)) {
+		return {
+			label: 'Rows',
+			value: output.length,
+		};
+	}
+
+	if (output && typeof output === 'object') {
+		return {
+			label: 'Keys',
+			value: Object.keys(output).length,
+		};
+	}
+
+	return {
+		label: 'State',
+		value: output ? 'Ready' : 'Idle',
+	};
+};
+
+const RealTimeOverlay = React.memo(({ isActive, output, outputType, lastUpdate, fps }) => {
+	if (!isActive) {
+		return null;
+	}
+
+	const metric = getRealtimeMetric(output, outputType);
 
 	return (
 		<div className="realtime-overlay">
 			<div className="realtime-info">
-				<div className="status-indicator">🔴 LIVE
-					<span>{'  '}{new Date(lastUpdate).toLocaleTimeString()}</span>
+				<div className="status-indicator">
+					LIVE <span>{new Date(lastUpdate).toLocaleTimeString()}</span>
 				</div>
 				<div className="metrics">
-					<span>Emd: {embeddings?.length || 'N/A'}</span>
-					<span>{' '}FPS: {fps}</span>
+					<span>{metric.label}: {metric.value}</span>
+					<span>FPS: {fps}</span>
 				</div>
 			</div>
 		</div>
 	);
 });
 
-// Separate component for embedding display with optimized rendering
-const EmbeddingDisplay = React.memo(({ embeddings, timestamp, isRealTime = false }) => {
-	const displayData = useMemo(() => {
-		if (!embeddings) return null;
-		return embeddings.slice(0, 10);
-	}, [embeddings]);
-
-	if (!embeddings) return null;
+const OutputDisplay = React.memo(({ output, outputType, isRealTime = false }) => {
+	if (!output) {
+		return null;
+	}
 
 	return (
 		<div className={`embedding-display ${isRealTime ? 'realtime' : 'static'}`}>
 			<div className="success-results">
-				{displayData.map((value, index) => (
-					<span key={index} className="embedding-value">
-						{typeof value === 'number' ? value.toFixed(4) : typeof value === 'object' ? JSON.stringify(value) : value}
-					</span>
-				))}
-				{embeddings.length > 10 && <span className="more-indicator">... +{embeddings.length - 10}</span>}
+				{outputType === 'embeddings' ? (
+					<>
+						<p><strong>Embedding dimensions:</strong> {output.length}</p>
+						<pre className="embedding-data">
+							{JSON.stringify(getPreviewPayload(output), null, 2)}
+						</pre>
+					</>
+				) : (
+					<pre className="embedding-data">
+						{JSON.stringify(getPreviewPayload(output), null, 2)}
+					</pre>
+				)}
 			</div>
 		</div>
 	);
 });
 
-// Main component optimized for real-time performance
 const WebcamCapture = ({ model, modelName }) => {
 	const [isWebcamActive, setIsWebcamActive] = useState(false);
 	const [capturedImage, setCapturedImage] = useState(null);
@@ -56,108 +107,137 @@ const WebcamCapture = ({ model, modelName }) => {
 
 	const webcamRef = useRef(null);
 	const canvasRef = useRef(null);
+	const outputCanvasRef = useRef(null);
 	const animationFrameRef = useRef(null);
 	const lastProcessTimeRef = useRef(0);
 	const frameCountRef = useRef(0);
 	const lastFpsUpdateRef = useRef(Date.now());
 	const processingRef = useRef(false);
 
-	const videoConstraints = useMemo(() => ({
-		width: 640,
-		height: 480,
-		facingMode: "user",
-		frameRate: { ideal: 30, max: 60 }
-	}), []);
+	const modelDetails = getModelConfig(modelName);
+	const supportsRealTime = modelDetails?.output.type !== 'image';
 
-	// Optimized image processing function
-	const processImageData = useCallback(async (imageSrc, updateResults = true) => {
-		if (!model || processingRef.current) return null;
+	const videoConstraints = useMemo(
+		() => ({
+			width: 640,
+			height: 480,
+			facingMode: 'user',
+			frameRate: { ideal: 30, max: 60 },
+		}),
+		[]
+	);
 
-		processingRef.current = true;
+	const processImageData = useCallback(
+		async (imageSrc, updateResults = true, targetCanvas = null) => {
+			if (!model || !modelDetails || processingRef.current) {
+				return null;
+			}
 
-		try {
-			return new Promise((resolve, reject) => {
-				const img = new Image();
-				img.onload = async () => {
-					try {
-						let processedData;
-						if (modelName === "mobileFaceNet") {
-							processedData = preprocessSingleForMobileNet(img, canvasRef.current);
+			processingRef.current = true;
+
+			try {
+				return await new Promise((resolve, reject) => {
+					const img = new Image();
+					img.onload = async () => {
+						try {
+							const processedData = prepareModelInput(
+								img,
+								canvasRef.current,
+								modelDetails
+							);
+							const startTime = performance.now();
+							const inferenceOutput = await runInference(
+								model,
+								processedData,
+								modelDetails
+							);
+							const inferenceTimeMs = performance.now() - startTime;
+
+							const result = {
+								success: true,
+								output: inferenceOutput,
+								inferenceTimeMs,
+								timestamp: new Date().toISOString(),
+							};
+
+							if (modelDetails.output.type === 'image' && targetCanvas) {
+								result.outputDimensions = renderImageOutputToCanvas(
+									inferenceOutput,
+									targetCanvas,
+									img.width,
+									img.height
+								);
+							}
+
+							if (updateResults) {
+								setRealTimeResults(result);
+							}
+
+							resolve(result);
 						}
-						else if (modelName === "faceNet512") {
-							processedData = preprocessImage(img, canvasRef.current);
-						}
-						else if (modelName === "mirnet_int8") {
-							processedData = preprocessImage(img, canvasRef.current, 400);
-						}
+						catch (err) {
+							console.error('Processing error:', err);
+							const errorResult = { success: false, error: err.message };
 
-						const inferenceResults = await runInference(model, processedData);
+							if (updateResults) {
+								setRealTimeResults(errorResult);
+							}
 
-						const result = {
-							success: true,
-							embeddings: inferenceResults,
-							timestamp: new Date().toISOString(),
-						};
-
-						if (updateResults) {
-							setRealTimeResults(result);
+							reject(errorResult);
 						}
-
-						resolve(result);
-					} catch (err) {
-						console.error('Processing error:', err);
-						const errorResult = { success: false, error: err.message };
-						if (updateResults) {
-							setRealTimeResults(errorResult);
+						finally {
+							processingRef.current = false;
 						}
-						reject(errorResult);
-					} finally {
+					};
+					img.onerror = () => {
 						processingRef.current = false;
-					}
-				};
-				img.onerror = () => {
-					processingRef.current = false;
-					reject(new Error('Failed to load image'));
-				};
-				img.src = imageSrc;
-			});
-		} catch (err) {
-			processingRef.current = false;
-			throw err;
-		}
-	}, [model, modelName]);
+						reject(new Error('Failed to load image'));
+					};
+					img.src = imageSrc;
+				});
+			}
+			catch (err) {
+				processingRef.current = false;
+				throw err;
+			}
+		},
+		[model, modelDetails]
+	);
 
-	// Real-time processing loop using requestAnimationFrame
 	const processRealTime = useCallback(() => {
-		if (!realTimeMode || !isWebcamActive || !webcamRef.current) {
+		if (!realTimeMode || !isWebcamActive || !webcamRef.current || !supportsRealTime) {
 			return;
 		}
 
 		const now = Date.now();
 
-		// Throttle to ~30 FPS for processing while maintaining smooth UI
-		if (now - lastProcessTimeRef.current >= 33) { // ~30 FPS
+		if (now - lastProcessTimeRef.current >= 33) {
 			try {
 				const imageSrc = webcamRef.current.getScreenshot();
 				if (imageSrc && !processingRef.current) {
 					processImageData(imageSrc, true).catch(console.error);
 					lastProcessTimeRef.current = now;
 
-					// Update FPS counter
-					frameCountRef.current++;
+					frameCountRef.current += 1;
 					if (now - lastFpsUpdateRef.current >= 1000) {
-						setFps(Math.round(frameCountRef.current * 1000 / (now - lastFpsUpdateRef.current)));
+						setFps(
+							Math.round(
+								(frameCountRef.current * 1000) /
+								(now - lastFpsUpdateRef.current)
+							)
+						);
 						frameCountRef.current = 0;
 						lastFpsUpdateRef.current = now;
 					}
 				}
-			} catch (err) {
+			}
+			catch (err) {
 				console.error('Real-time capture error:', err);
 			}
 		}
 
 		animationFrameRef.current = requestAnimationFrame(processRealTime);
-	}, [realTimeMode, isWebcamActive, processImageData]);
+	}, [isWebcamActive, processImageData, realTimeMode, supportsRealTime]);
 
 	const stopWebcam = useCallback(() => {
 		setIsWebcamActive(false);
@@ -170,15 +250,16 @@ const WebcamCapture = ({ model, modelName }) => {
 		processingRef.current = false;
 	}, []);
 
-	// Capture photo
 	const capturePhoto = useCallback(() => {
-		if (!webcamRef.current) return;
+		if (!webcamRef.current) {
+			return;
+		}
+
 		const imageSrc = webcamRef.current.getScreenshot();
 		setCapturedImage(imageSrc);
 		setResults(null);
 	}, []);
 
-	// Process captured image
 	const processCapture = useCallback(async () => {
 		if (!capturedImage || !model) {
 			alert('Please capture an image and load a model first');
@@ -189,32 +270,54 @@ const WebcamCapture = ({ model, modelName }) => {
 		setResults(null);
 
 		try {
-			const result = await processImageData(capturedImage, false);
+			const result = await processImageData(
+				capturedImage,
+				false,
+				outputCanvasRef.current
+			);
 			setResults(result);
-		} catch (err) {
+		}
+		catch (err) {
 			setResults({
 				success: false,
-				error: err.message
+				error: err.message,
 			});
-		} finally {
+		}
+		finally {
 			setProcessing(false);
 		}
 	}, [capturedImage, model, processImageData]);
 
-	// Toggle real-time mode
 	const toggleRealTimeMode = useCallback(() => {
 		if (!model) {
 			alert('Please load a model first');
 			return;
 		}
-		setRealTimeMode(prev => !prev);
-	}, [model]);
 
-	// Effect to handle real-time processing
+		if (!supportsRealTime) {
+			return;
+		}
+
+		setRealTimeMode((prev) => !prev);
+	}, [model, supportsRealTime]);
+
+	const startWebcam = () => {
+		setIsWebcamActive(true);
+		setCapturedImage(null);
+		setResults(null);
+	};
+
 	useEffect(() => {
-		if (realTimeMode && isWebcamActive && model) {
+		if (!supportsRealTime) {
+			setRealTimeMode(false);
+		}
+	}, [supportsRealTime]);
+
+	useEffect(() => {
+		if (realTimeMode && isWebcamActive && model && supportsRealTime) {
 			processRealTime();
-		} else if (animationFrameRef.current) {
+		}
+		else if (animationFrameRef.current) {
 			cancelAnimationFrame(animationFrameRef.current);
 			animationFrameRef.current = null;
 		}
@@ -224,17 +327,10 @@ const WebcamCapture = ({ model, modelName }) => {
 				cancelAnimationFrame(animationFrameRef.current);
 			}
 		};
-	}, [realTimeMode, isWebcamActive, model, processRealTime]);
+	}, [isWebcamActive, model, processRealTime, realTimeMode, supportsRealTime]);
 
-	const startWebCameFunc = () => {
-		setIsWebcamActive(true);
-		setCapturedImage(null);
-		setResults(null);
-	}
-
-	// Cleanup on unmount
 	useEffect(() => {
-		startWebCameFunc();
+		startWebcam();
 
 		return () => {
 			if (animationFrameRef.current) {
@@ -243,12 +339,23 @@ const WebcamCapture = ({ model, modelName }) => {
 		};
 	}, []);
 
+	if (!modelDetails) {
+		return null;
+	}
+
 	return (
-		<div className="webcam-capture" style={{ display: "flex", width: "800px" }}>
-			<div className="webcam-controls" style={{ width: "100px" }}>
+		<div className="webcam-capture">
+			<div className="card-header">
+				<h2>Live Feed</h2>
+			</div>
+
+			<div className="webcam-controls">
 				<div className="active-controls">
-					<button onClick={isWebcamActive ? stopWebcam : startWebCameFunc} className="stop-webcam-button">
-						{isWebcamActive ? "Stop Webcam" : "Start Webcam"}
+					<button
+						onClick={isWebcamActive ? stopWebcam : startWebcam}
+						className="stop-webcam-button"
+					>
+						{isWebcamActive ? 'Stop Webcam' : 'Start Webcam'}
 					</button>
 					<button onClick={capturePhoto} className="capture-button">
 						Capture Photo
@@ -256,14 +363,19 @@ const WebcamCapture = ({ model, modelName }) => {
 					<button
 						onClick={toggleRealTimeMode}
 						className={`realtime-button ${realTimeMode ? 'active' : ''}`}
-						disabled={!model}
+						disabled={!model || !supportsRealTime}
 					>
 						{realTimeMode ? 'Stop Real-time' : 'Start Real-time'}
 					</button>
 				</div>
+				{!supportsRealTime && (
+					<p className="webcam-note">
+						Real-time mode is disabled for image-output models. Use Capture Photo to inspect the processed image.
+					</p>
+				)}
 			</div>
-			<div>
 
+			<div>
 				{isWebcamActive && (
 					<div className="webcam-container">
 						<Webcam
@@ -275,17 +387,17 @@ const WebcamCapture = ({ model, modelName }) => {
 						/>
 
 						<RealTimeOverlay
-							isActive={realTimeMode}
-							embeddings={realTimeResults?.embeddings}
+							isActive={realTimeMode && Boolean(realTimeResults?.success)}
+							output={realTimeResults?.output}
+							outputType={modelDetails.output.type}
 							lastUpdate={realTimeResults?.timestamp}
 							fps={fps}
 						/>
 
-						{/* Real-time embeddings display */}
 						{realTimeMode && realTimeResults?.success && (
-							<EmbeddingDisplay
-								embeddings={realTimeResults.embeddings}
-								timestamp={realTimeResults.timestamp}
+							<OutputDisplay
+								output={realTimeResults.output}
+								outputType={modelDetails.output.type}
 								isRealTime={true}
 							/>
 						)}
@@ -294,7 +406,7 @@ const WebcamCapture = ({ model, modelName }) => {
 
 				{capturedImage && (
 					<div className="captured-image">
-						<h4>Captured Image:</h4>
+						<h4>Captured Image</h4>
 						<img
 							src={capturedImage}
 							alt="Captured"
@@ -311,22 +423,35 @@ const WebcamCapture = ({ model, modelName }) => {
 					</div>
 				)}
 
-				{/* Static results for captured image */}
+				{modelDetails.output.type === 'image' && (
+					<div className="output-image-section">
+						<h4>Output Image</h4>
+						<canvas ref={outputCanvasRef} className="output-canvas" />
+					</div>
+				)}
+
 				{results && (
 					<div className="results-section">
-						<h4>Processing Results:</h4>
+						<h4>Processing Results</h4>
 						{results.success ? (
 							<div className="success-results">
-								<p>✅ Face processing completed successfully!</p>
-								<EmbeddingDisplay
-									embeddings={results.embeddings}
-									timestamp={results.timestamp}
-									isRealTime={false}
-								/>
+								{modelDetails.output.type === 'image' ? (
+									<>
+										<p>Image processing completed successfully.</p>
+										<p><strong>Output resolution:</strong> {results.outputDimensions.width} x {results.outputDimensions.height}</p>
+									</>
+								) : (
+									<OutputDisplay
+										output={results.output}
+										outputType={modelDetails.output.type}
+									/>
+								)}
+								<p><strong>Inference time:</strong> {(results.inferenceTimeMs / 1000).toFixed(2)} s</p>
+								<p><strong>Processed at:</strong> {new Date(results.timestamp).toLocaleString()}</p>
 							</div>
 						) : (
 							<div className="error-results">
-								<p>❌ Processing failed: {results.error}</p>
+								<p>Processing failed: {results.error}</p>
 							</div>
 						)}
 					</div>
@@ -334,7 +459,6 @@ const WebcamCapture = ({ model, modelName }) => {
 			</div>
 
 			<canvas ref={canvasRef} style={{ display: 'none' }} />
-
 		</div>
 	);
 };

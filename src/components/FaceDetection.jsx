@@ -1,43 +1,12 @@
 import React, { useState } from 'react';
-import { calculateSimilarity, normalizeEmbedding } from '../utils/modelUtils';
+import { MODEL_OPTIONS } from '../config/modelRegistry';
 
 const FaceDetection = () => {
 	const [savedEmbeddings, setSavedEmbeddings] = useState([]);
 	const [comparisonResults, setComparisonResults] = useState(null);
-
-	const saveEmbedding = (embedding, label) => {
-		if (!embedding || !label) return;
-
-		const normalizedEmbedding = normalizeEmbedding(embedding);
-		const newEmbedding = {
-			id: Date.now(),
-			label: label,
-			embedding: normalizedEmbedding,
-			timestamp: new Date().toISOString()
-		};
-
-		setSavedEmbeddings(prev => [...prev, newEmbedding]);
-	};
-
-	const compareEmbeddings = (newEmbedding) => {
-		if (!newEmbedding || savedEmbeddings.length === 0) return;
-
-		const normalizedNew = normalizeEmbedding(newEmbedding);
-
-		const similarities = savedEmbeddings.map(saved => {
-			const similarity = calculateSimilarity(normalizedNew, saved.embedding);
-			return {
-				label: saved.label,
-				similarity: similarity,
-				timestamp: saved.timestamp
-			};
-		});
-
-		// Sort by similarity (highest first)
-		similarities.sort((a, b) => b.similarity - a.similarity);
-
-		setComparisonResults(similarities);
-	};
+	const embeddingModels = MODEL_OPTIONS.filter(
+		(model) => model.output.type === 'embeddings'
+	);
 
 	const clearSavedEmbeddings = () => {
 		setSavedEmbeddings([]);
@@ -46,7 +15,9 @@ const FaceDetection = () => {
 
 	return (
 		<div className="face-detection">
-			<h3>Face Recognition Database</h3>
+			<div className="card-header">
+				<h2>Embedding Vault</h2>
+			</div>
 
 			<div className="saved-embeddings">
 				<h4>Saved Face Embeddings: {savedEmbeddings.length}</h4>
@@ -94,21 +65,28 @@ const FaceDetection = () => {
 			)}
 
 			<div className="detection-info">
-				<h4>How to use:</h4>
+				<h4>How to use</h4>
 				<ol>
-					<li>Load either MobileFaceNet or FaceNet-512 model</li>
-					<li>Process face images or use webcam to get embeddings</li>
-					<li>Save embeddings with labels for face recognition</li>
-					<li>Compare new faces against saved embeddings</li>
+					<li>Load an embedding model such as MobileFaceNet or FaceNet-512.</li>
+					<li>Process face images or webcam captures to get embedding vectors.</li>
+					<li>Save embeddings with labels for recognition workflows.</li>
+					<li>Compare new faces against saved embeddings.</li>
 				</ol>
 
 				<div className="model-comparison">
-					<h5>Model Comparison:</h5>
+					<h5>Embedding Models</h5>
 					<ul>
-						<li><strong>MobileFaceNet (10MB):</strong> Faster, optimized for mobile, good accuracy</li>
-						<li><strong>FaceNet-512 (24MB):</strong> Higher accuracy, 512D embeddings, more computational</li>
+						{embeddingModels.map((model) => (
+							<li key={model.id}>
+								<strong>{model.name} ({model.size}):</strong> {model.description}
+							</li>
+						))}
 					</ul>
 				</div>
+
+				<p>
+					Image-output models and generic raw-output models are available in the playground, but they are not connected to this embedding comparison panel.
+				</p>
 			</div>
 		</div>
 	);

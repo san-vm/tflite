@@ -1,176 +1,316 @@
 import * as tf from '@tensorflow/tfjs';
 
+const isTensorLike = (value) =>
+	Boolean(value) &&
+	typeof value.array === 'function' &&
+	typeof value.dispose === 'function';
 
-// Preprocess one image to 112x112, 160x160 returns tensor of shape [1,112,112,3]
-export const preprocessImage = (img, canvas, size = 160) => {
-	const inputSize = size;
-	canvas.width = inputSize;
-	canvas.height = inputSize;
+const configureCanvasResize = (ctx, resizeMethod = 'bilinear') => {
+	const useNearestNeighbor = resizeMethod === 'nearest';
+	ctx.imageSmoothingEnabled = !useNearestNeighbor;
+
+	if ('imageSmoothingQuality' in ctx) {
+		ctx.imageSmoothingQuality = useNearestNeighbor ? 'low' : 'high';
+	}
+};
+
+const drawImageToCanvas = (img, canvas, size, resizeMethod = 'bilinear') => {
+	canvas.width = size;
+	canvas.height = size;
+
 	const ctx = canvas.getContext('2d');
-	ctx.drawImage(img, 0, 0, inputSize, inputSize);
+	configureCanvasResize(ctx, resizeMethod);
+	ctx.clearRect(0, 0, size, size);
+	ctx.drawImage(img, 0, 0, size, size);
 
-	// Get image data
-	const imageData = ctx.getImageData(0, 0, inputSize, inputSize);
+	return ctx;
+};
+
+export const preprocessImage = (img, canvas, options = {}) => {
+	const normalizedOptions =
+		typeof options === 'number'
+			? { size: options }
+			: options;
+	const {
+		size = 160,
+		dtype = 'float32',
+		normalization = 'zeroToOne',
+		resizeMethod = 'bilinear',
+	} = normalizedOptions;
+
+	const ctx = drawImageToCanvas(img, canvas, size, resizeMethod);
+	const imageData = ctx.getImageData(0, 0, size, size);
 	const pixels = imageData.data;
-
-	// Convert to tensor and normalize
-	const tensorData = new Float32Array(inputSize * inputSize * 3);
+	const tensorData =
+		dtype === 'int32'
+			? new Int32Array(size * size * 3)
+			: new Float32Array(size * size * 3);
 
 	for (let i = 0; i < pixels.length; i += 4) {
 		const pixelIndex = i / 4;
-		// Normalize pixel values to [0, 1] or [-1, 1] depending on model
-		tensorData[pixelIndex * 3] = pixels[i] / 255.0;       // R
-		tensorData[pixelIndex * 3 + 1] = pixels[i + 1] / 255.0; // G
-		tensorData[pixelIndex * 3 + 2] = pixels[i + 2] / 255.0; // B
+		const red = pixels[i];
+		const green = pixels[i + 1];
+		const blue = pixels[i + 2];
+
+		if (dtype === 'int32' || normalization === 'none') {
+			tensorData[pixelIndex * 3] = red;
+			tensorData[pixelIndex * 3 + 1] = green;
+			tensorData[pixelIndex * 3 + 2] = blue;
+		}
+		else {
+			tensorData[pixelIndex * 3] = red / 255;
+			tensorData[pixelIndex * 3 + 1] = green / 255;
+			tensorData[pixelIndex * 3 + 2] = blue / 255;
+		}
 	}
 
-	// Create tensor with shape [1, height, width, channels]
-	const tensor = tf.tensor4d(tensorData, [1, inputSize, inputSize, 3]);
-
-	return tensor;
+	return tf.tensor4d(tensorData, [1, size, size, 3], dtype);
 };
 
-export const preprocessImageUint8 = (img, canvas, size = 160) => {
-	const inputSize = size;
-	canvas.width = inputSize;
-	canvas.height = inputSize;
-	const ctx = canvas.getContext('2d');
-	ctx.drawImage(img, 0, 0, inputSize, inputSize);
+export const preprocessImageUint8 = (img, canvas, size = 160) =>
+	preprocessImage(img, canvas, {
+		size,
+		dtype: 'int32',
+		normalization: 'none',
+	});
 
-	const imageData = ctx.getImageData(0, 0, inputSize, inputSize);
-	const pixels = imageData.data;
-
-	// Uint8Array or Int32Array (use Int32 to avoid dtype cast error)
-	const tensorData = new Int32Array(inputSize * inputSize * 3);
-
-	for (let i = 0; i < pixels.length; i += 4) {
-		const pixelIndex = i / 4;
-		tensorData[pixelIndex * 3] = pixels[i];       // R
-		tensorData[pixelIndex * 3 + 1] = pixels[i + 1]; // G
-		tensorData[pixelIndex * 3 + 2] = pixels[i + 2]; // B
-	}
-
-	// Use 'int32', which is safe in TF.js and keeps raw pixel values
-	const tensor = tf.tensor4d(tensorData, [1, inputSize, inputSize, 3], 'int32');
-
-	return tensor;
-};
-
-
-
-// Combine two preprocessed tensors into a batch of shape [2,112,112,3]
 export const preprocessBatchForMobileNet = (img1, img2, canvas, size = 112) => {
-	const tensor1 = preprocessImage(img1, canvas, size); // shape [1,112,112,3]
-	const tensor2 = preprocessImage(img2, canvas, size); // shape [1,112,112,3]
-	// Concatenate along 0th axis (batch)
-	const batchTensor = tf.concat([tensor1, tensor2], 0); // shape [2,112,112,3]
+	const tensor1 = preprocessImage(img1, canvas, size);
+	const tensor2 = preprocessImage(img2, canvas, size);
+	const batchTensor = tf.concat([tensor1, tensor2], 0);
+
 	tensor1.dispose();
 	tensor2.dispose();
+
 	return batchTensor;
 };
 
-// If you only have one image and must duplicate for batch size 2:
 export const preprocessSingleForMobileNet = (img, canvas, size = 112) => {
-	const tensor = preprocessImage(img, canvas, size); // shape [1,112,112,3]
-	const batchTensor = tf.concat([tensor, tensor], 0); // shape [2,112,112,3]
+	const tensor = preprocessImage(img, canvas, size);
+	const batchTensor = tf.concat([tensor, tensor], 0);
+
 	tensor.dispose();
+
 	return batchTensor;
 };
 
+export const prepareModelInput = (img, canvas, modelConfig) => {
+	if (!modelConfig?.input) {
+		throw new Error('Missing model input configuration');
+	}
 
-/**
- * Run inference on the TFLite model
- * @param {Object} model - Loaded TFLite model
- * @param {tf.Tensor} inputTensor - Preprocessed input tensor
- * @returns {Array} - Model output (face embeddings)
- */
-export const runInference = async (model, inputTensor) => {
+	const {
+		size,
+		dtype = 'float32',
+		normalization = 'zeroToOne',
+		batchStrategy = 'single',
+		resizeMethod = 'bilinear',
+	} = modelConfig.input;
+
+	const inputTensor = preprocessImage(img, canvas, {
+		size,
+		dtype,
+		normalization,
+		resizeMethod,
+	});
+
+	if (batchStrategy === 'duplicate') {
+		const batchTensor = tf.concat([inputTensor, inputTensor], 0);
+		inputTensor.dispose();
+		return batchTensor;
+	}
+
+	return inputTensor;
+};
+
+const serializePrediction = async (prediction) => {
+	if (isTensorLike(prediction)) {
+		const serializedTensor = await prediction.array();
+		prediction.dispose();
+		return serializedTensor;
+	}
+
+	if (Array.isArray(prediction)) {
+		return Promise.all(prediction.map((item) => serializePrediction(item)));
+	}
+
+	if (prediction && typeof prediction === 'object') {
+		const entries = await Promise.all(
+			Object.entries(prediction).map(async ([key, value]) => [
+				key,
+				await serializePrediction(value),
+			])
+		);
+
+		return Object.fromEntries(entries);
+	}
+
+	return prediction;
+};
+
+const getPrimaryOutput = (output) => {
+	if (Array.isArray(output)) {
+		return output;
+	}
+
+	if (output && typeof output === 'object') {
+		const values = Object.values(output);
+		if (values.length === 1) {
+			return values[0];
+		}
+	}
+
+	return output;
+};
+
+const extractEmbeddingOutput = (output) => {
+	const primaryOutput = getPrimaryOutput(output);
+
+	if (Array.isArray(primaryOutput) && primaryOutput.length > 0) {
+		if (
+			Array.isArray(primaryOutput[0]) &&
+			typeof primaryOutput[0][0] === 'number'
+		) {
+			return primaryOutput[0];
+		}
+
+		if (typeof primaryOutput[0] === 'number') {
+			return primaryOutput;
+		}
+	}
+
+	throw new Error('Unable to interpret model output as an embedding vector');
+};
+
+const extractImageOutput = (output) => {
+	const primaryOutput = getPrimaryOutput(output);
+
+	if (
+		Array.isArray(primaryOutput) &&
+		primaryOutput.length === 1 &&
+		Array.isArray(primaryOutput[0])
+	) {
+		return primaryOutput[0];
+	}
+
+	return primaryOutput;
+};
+
+const formatModelOutput = (output, modelConfig) => {
+	const outputType = modelConfig?.output?.type ?? 'generic';
+
+	if (outputType === 'embeddings') {
+		return extractEmbeddingOutput(output);
+	}
+
+	if (outputType === 'image') {
+		return extractImageOutput(output);
+	}
+
+	return output;
+};
+
+export const runInference = async (model, inputTensor, modelConfig) => {
 	if (!model) {
 		throw new Error('Model not loaded');
 	}
 
+	let inputDisposed = false;
+
 	try {
-		// Run prediction
 		const prediction = await model.predict(inputTensor);
-
-		// Convert tensor to array
-		let outputData;
-		if (prediction.data) {
-			outputData = await prediction.data();
-		}
-		else if (prediction.arraySync) {
-			outputData = prediction.arraySync();
-		}
-		else {
-			const clssPred = prediction.Identity.arraySync();  // Float32Array(8)
-			const leafNodeMask = prediction.Identity_1.dataSync();  // Float32Array(8)
-
-			// Compute score (matches leaf_score1)
-			let score = 0;
-			for (let i = 0; i < 8; i++) {
-				score += Math.abs(clssPred[i]) * leafNodeMask[i];
-			}
-
-			console.log('clss_pred:', clssPred);
-			console.log('leaf_node_mask:', leafNodeMask);
-			console.log('Liveness score:', score);
-
-			// Classify
-			const isSpoof = score > 0.6;
-			return ([{ score, isSpoof }]);
-		}
-
-		// Clean up tensors
 		inputTensor.dispose();
-		if (prediction.dispose) {
-			prediction.dispose();
+		inputDisposed = true;
+
+		const serializedOutput = await serializePrediction(prediction);
+		return formatModelOutput(serializedOutput, modelConfig);
+	}
+	catch (error) {
+		if (!inputDisposed) {
+			inputTensor.dispose();
 		}
-
-		// Return flattened array (face embeddings)
-		return Array.isArray(outputData[0]) ? outputData[0] : Array.from(outputData);
-
-	} catch (error) {
-		// Clean up tensor in case of error
-		inputTensor.dispose();
 		throw new Error(`Inference failed: ${error.message}`);
 	}
 };
 
-/**
- * Calculate cosine similarity between two face embeddings
- * @param {Array} embedding1 - First face embedding
- * @param {Array} embedding2 - Second face embedding
- * @returns {number} - Similarity score (0-1)
- */
+export const renderImageOutputToCanvas = (
+	rawData,
+	canvas,
+	targetWidth,
+	targetHeight
+) => {
+	const height = rawData?.length ?? 0;
+	const width = rawData?.[0]?.length ?? 0;
+
+	if (!width || !height) {
+		throw new Error('Invalid output image dimensions');
+	}
+
+	const rgbaData = new Uint8ClampedArray(width * height * 4);
+	let index = 0;
+
+	for (let y = 0; y < height; y += 1) {
+		for (let x = 0; x < width; x += 1) {
+			const pixel = rawData[y][x] ?? [0, 0, 0];
+
+			rgbaData[index] = Math.max(0, Math.min(255, Math.round((pixel[0] ?? 0) * 255)));
+			rgbaData[index + 1] = Math.max(0, Math.min(255, Math.round((pixel[1] ?? 0) * 255)));
+			rgbaData[index + 2] = Math.max(0, Math.min(255, Math.round((pixel[2] ?? 0) * 255)));
+			rgbaData[index + 3] = 255;
+			index += 4;
+		}
+	}
+
+	const imageData = new ImageData(rgbaData, width, height);
+	const outputCanvas = canvas;
+	outputCanvas.width = targetWidth ?? width;
+	outputCanvas.height = targetHeight ?? height;
+
+	const outputContext = outputCanvas.getContext('2d');
+	const tempCanvas = document.createElement('canvas');
+	tempCanvas.width = width;
+	tempCanvas.height = height;
+
+	const tempContext = tempCanvas.getContext('2d');
+	tempContext.putImageData(imageData, 0, 0);
+
+	outputContext.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+	outputContext.drawImage(
+		tempCanvas,
+		0,
+		0,
+		width,
+		height,
+		0,
+		0,
+		outputCanvas.width,
+		outputCanvas.height
+	);
+
+	return { width, height };
+};
+
 export const calculateSimilarity = (embedding1, embedding2) => {
 	if (embedding1.length !== embedding2.length) {
 		throw new Error('Embeddings must have the same length');
 	}
 
-	// Calculate dot product
 	let dotProduct = 0;
 	let norm1 = 0;
 	let norm2 = 0;
 
-	for (let i = 0; i < embedding1.length; i++) {
+	for (let i = 0; i < embedding1.length; i += 1) {
 		dotProduct += embedding1[i] * embedding2[i];
 		norm1 += embedding1[i] * embedding1[i];
 		norm2 += embedding2[i] * embedding2[i];
 	}
 
-	// Calculate cosine similarity
 	const similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
 
-	// Convert to 0-1 range
 	return (similarity + 1) / 2;
 };
 
-/**
- * Normalize face embedding vector
- * @param {Array} embedding - Face embedding vector
- * @returns {Array} - L2 normalized embedding
- */
 export const normalizeEmbedding = (embedding) => {
-	const norm = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
-	return embedding.map(val => val / norm);
+	const norm = Math.sqrt(embedding.reduce((sum, value) => sum + value * value, 0));
+	return embedding.map((value) => value / norm);
 };

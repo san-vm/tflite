@@ -1,25 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as tf from '@tensorflow/tfjs';
-import * as tflite from '@tensorflow/tfjs-tflite';
+import * as tflite from '@tensorflow/tfjs-tflite/dist/tf-tflite.fesm.js';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import ModelLoader from './components/ModelLoader';
 import ImageInput from './components/ImageInput';
 import WebcamCapture from './components/WebcamCapture';
 import FaceDetection from './components/FaceDetection';
+import {
+	DEFAULT_MODEL_ID,
+	createInitialModelState,
+	getModelConfig,
+} from './config/modelRegistry';
 import './App.css';
 
 function App() {
-	const [models, setModels] = useState({
-		mobileFaceNet: null,
-		faceNet512: null,
-		mirnet_int8: null,
-	});
-	const [selectedModel, setSelectedModel] = useState('mobileFaceNet');
+	const [models, setModels] = useState(createInitialModelState);
+	const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID);
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState(null);
 	const [inputMode, setInputMode] = useState('image'); // 'image' or 'webcam'
 
-	const ref = useRef()
+	const ref = useRef();
+	const currentModel = models[selectedModel];
+	const currentModelConfig = getModelConfig(selectedModel);
+	const statusTone = error ? 'bad' : currentModel ? 'good' : undefined;
+	const statusLabel = error
+		? 'Runtime attention required'
+		: isLoading
+			? `Loading ${currentModelConfig?.name ?? 'model'}...`
+			: currentModel
+				? `${currentModelConfig?.name ?? 'Model'} loaded locally`
+				: 'WASM ready. Load a model to begin.';
 
 	useEffect(() => {
 		initializeTensorFlow();
@@ -27,13 +38,13 @@ function App() {
 
 	const initializeTensorFlow = async () => {
 		if (ref.current) {
-			return
+			return;
 		}
-		ref.current = true
+		ref.current = true;
 		try {
 			// Set WASM paths for TensorFlow.js backend
-			setWasmPaths("/wasm/");
-			tflite.setWasmPath("/wasm/");
+			setWasmPaths('/wasm/');
+			tflite.setWasmPath('/wasm/');
 
 			// Initialize TensorFlow.js with WASM backend for better performance
 			await tf.setBackend('wasm');
@@ -51,95 +62,99 @@ function App() {
 		setError(null);
 
 		try {
-			// MobileFaceNet, facenet_512
-			let tempModelName = ''
-			if (modelName === 'mobileFaceNet') {
-				tempModelName = 'MobileFaceNet'
+			const modelConfig = getModelConfig(modelName);
+			if (!modelConfig) {
+				throw new Error(`Unknown model: ${modelName}`);
 			}
-			else if (modelName === 'mirnet_int8') {
-				tempModelName = 'mirnet_int8'
-			}
-			else if (modelName === 'faceNet512') {
-				tempModelName = 'facenet_512'
-			}
-			else {
-				setError(`Failed to load`);
-				setIsLoading(false);
-				return
-			}
-			const modelPath = `/models/${tempModelName}.tflite`;
+
+			const modelPath = `/models/${modelConfig.fileName}`;
 			console.log(`Loading model from: ${modelPath}`);
 
 			const model = await tflite.loadTFLiteModel(modelPath);
 			console.log(`${modelName} loaded successfully`);
 
-			setModels(prev => ({
+			setModels((prev) => ({
 				...prev,
-				[modelName]: model
+				[modelName]: model,
 			}));
-		} catch (err) {
+		}
+		catch (err) {
 			console.error(`Failed to load ${modelName}:`, err);
 			setError(`Failed to load ${modelName}: ${err.message}`);
-		} finally {
+		}
+		finally {
 			setIsLoading(false);
 		}
 	};
 
-	const getCurrentModel = () => {
-		return models[selectedModel];
-	};
-
 	return (
-		<div className="App">
-			<header className="App-header">
-				<h1>TensorFlow Lite Face Detection</h1>
-				<p>Local Face Recognition with MobileFaceNet & FaceNet-512</p>
-			</header>
+		<>
+			<div className="bg-shape" />
+			<div className="bg-grid" />
+			<div className="App">
+				<header className="hero compact">
+					<div>
+						<p className="tag">Vision Runtime</p>
+						<h1>GateFace Model Lab</h1>
+						<p className="subtitle">
+							Load local TFLite models, validate preprocessing contracts, and inspect image or webcam inference entirely in the browser.
+						</p>
+					</div>
+					<div className="status-pill" data-tone={statusTone}>
+						{statusLabel}
+					</div>
+				</header>
 
-			<div className="container">
-				{/* Model Selection and Loading */}
-				<div>
-					{/* Input Mode Selection */}
-					<div className="input-mode-selector">
-						<h3>Input Mode</h3>
-						<div className="mode-buttons">
-							<button
-								className={inputMode === 'image' ? 'active' : ''}
-								onClick={() => setInputMode('image')}
-							>
-								Image Upload
-							</button>
-							<button
-								className={inputMode === 'webcam' ? 'active' : ''}
-								onClick={() => setInputMode('webcam')}
-							>
-								Webcam
-							</button>
+				<main className="container">
+					<div className="control-stack">
+						<div className="input-mode-selector">
+							<div className="card-header">
+								<h2>Input Mode</h2>
+								<p>Choose whether to test the active model against a still image or a live webcam stream.</p>
+							</div>
+							<div className="mode-buttons">
+								<button
+									className={inputMode === 'image' ? 'active' : ''}
+									onClick={() => setInputMode('image')}
+								>
+									Image Upload
+								</button>
+								<button
+									className={inputMode === 'webcam' ? 'active' : ''}
+									onClick={() => setInputMode('webcam')}
+								>
+									Webcam Feed
+								</button>
+							</div>
 						</div>
+
+						<ModelLoader
+							models={models}
+							selectedModel={selectedModel}
+							setSelectedModel={setSelectedModel}
+							loadModel={loadModel}
+							isLoading={isLoading}
+							error={error}
+						/>
 					</div>
 
-					<ModelLoader
-						models={models}
-						selectedModel={selectedModel}
-						setSelectedModel={setSelectedModel}
-						loadModel={loadModel}
-						isLoading={isLoading}
-						error={error}
-					/>
-				</div>
+					{inputMode === 'image' ? (
+						<ImageInput model={currentModel} modelName={selectedModel} />
+					) : (
+						<WebcamCapture model={currentModel} modelName={selectedModel} />
+					)}
 
+					<FaceDetection />
+				</main>
 
-				{/* Input Components */}
-				{inputMode === 'image' ? (
-					<ImageInput model={getCurrentModel()} modelName={selectedModel} />
-				) : (
-					<WebcamCapture model={getCurrentModel()} modelName={selectedModel} />
-				)}
+				<footer className="footer">
+					<span>React UI + TensorFlow Lite WASM runtime.</span>
+					<span className="mono">
+						{currentModelConfig ? `Selected profile: ${currentModelConfig.name}` : 'Select a model profile.'}
+					</span>
+				</footer>
 			</div>
-
-			{/* Face Detection Results */}
-			<FaceDetection />
-		</div>
+		</>
 	);
 }
 

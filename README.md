@@ -1,54 +1,114 @@
 # TFLite Model Playground
 
-A fast, flexible, and privacy-first in-browser platform to test and run TensorFlow Lite (TFLite) models using WebAssembly. Built with React + Vite, this project supports real-time webcam inference, image enhancement, and model configuration — all running locally in the browser.
+React + Vite app for loading TensorFlow Lite models in the browser with the `@tensorflow/tfjs-tflite` WASM runtime.
 
-## ✨ Features
+## What changed
 
-- 🔁 **General-Purpose TFLite Runner**: Easily load and run any compatible TFLite model
-- 🎥 **Live Webcam Inference**: Perform real-time predictions on webcam frames
-- 🌑 **Image Enhancement**: Includes a shadow removal model for improving low-light or dark images
-- 🧠 **Face Embeddings**: Test face-related models like FaceNet or MobileNet for feature extraction
-- 🛠️ **Custom Inference Pipeline**: Flexible structure to plug in your own preprocessing and postprocessing
-- 🔐 **Fully Local**: No data leaves the browser — privacy by design
-- ⚡ **Powered by WebAssembly**: Ultra-fast model execution using TFLite WASM backend
+The project now uses a central model registry at `src/config/modelRegistry.js`.
 
-## 🔧 Technologies Used
+Each model entry defines:
 
-- [Vite](https://vitejs.dev/)
-- [React](https://reactjs.org/)
-- [TensorFlow Lite Web](https://www.tensorflow.org/lite/guide/web)
-- [WebAssembly](https://webassembly.org/)
+- The `.tflite` filename under `public/models`
+- Input shape and resize size
+- Input dtype and normalization
+- Resize behavior such as nearest-neighbor vs bilinear
+- Output mode (`embeddings`, `image`, or `generic`)
+- Short usage notes shown in the UI
 
-## 📦 Model Support
+This makes it possible to add new models without duplicating `if/else` logic in the image and webcam components.
 
-Supports any TFLite model that is compatible with the WASM backend and meets browser memory limits.
+## Built-in models
 
-Built-in examples:
-- **FaceNet / MobileNet** – for facial feature extraction and embeddings
-- **Shadow Remover** – for enhancing images taken in poor lighting conditions
+- `MobileFaceNet`
+- `FaceNet-512`
+- `mirnet_int8`
+- `Custom Vision 256`
 
-> You can easily plug in your own `.tflite` model by modifying the config or loading via the UI (if enabled).
+`Custom Vision 256` is the new template entry for the preprocessing contract you shared.
 
-## 🖥️ How It Works
+## New 256x256 model contract
 
-1. Load a model (from local assets or user input)
-2. Input data via webcam or image
-3. Run inference via TFLite WASM
-4. Display the results or embeddings
-5. Apply optional postprocessing (e.g., visualizations or enhancements)
+The `customVision256` registry entry is configured to match this preprocessing flow:
 
-## 🚀 Getting Started
+```python
+img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_NEAREST)
+img = np.asarray(np.float32(img / 255))
+img = np.reshape(img, (1, 256, 256, 3))
+```
 
-### Prerequisites
-- Node.js >= 16
-- A modern browser (Chrome, Firefox, or Edge) with WASM + WebGL support
-- Camera permissions (for webcam-based inference)
+In the browser app that means:
 
-### Install and Run
+- Resize input images to `256 x 256`
+- Use nearest-neighbor resizing
+- Convert pixel values to `float32`
+- Normalize pixels to the `[0, 1]` range
+- Produce a tensor shaped `[1, 256, 256, 3]`
+
+## How to add your model
+
+1. Copy your `.tflite` file into `public/models/`.
+2. Open `src/config/modelRegistry.js`.
+3. Update the `customVision256.fileName` value to match your actual filename, or add another registry entry if you want a separate model option in the UI.
+4. If the model output is not raw JSON, update `output.type`:
+   - `embeddings` for a 1D embedding vector
+   - `image` for an RGB image output
+   - `generic` for raw object/array output
+5. Start the app and load the model from the dropdown.
+
+## Example registry entry
+
+```js
+customVision256: {
+  id: 'customVision256',
+  name: 'Custom Vision 256',
+  fileName: 'your_model_name.tflite',
+  size: 'Add model file',
+  description: 'Model expecting a [1, 256, 256, 3] float32 input tensor.',
+  input: {
+    size: 256,
+    dtype: 'float32',
+    normalization: 'zeroToOne',
+    batchStrategy: 'single',
+    resizeMethod: 'nearest',
+    shape: [1, 256, 256, 3],
+  },
+  output: {
+    type: 'generic',
+  },
+  documentation: [
+    'Resize to 256x256 with nearest-neighbor interpolation.',
+    'Normalize to float32 in the [0, 1] range.',
+    'Return the raw model output until a postprocessing step is defined.',
+  ],
+}
+```
+
+## Output handling
+
+The app now supports three output modes:
+
+- `embeddings`: the first embedding vector is extracted and previewed
+- `image`: the returned tensor is rendered to a canvas and can be saved as PNG
+- `generic`: the raw prediction is shown as formatted JSON
+
+If your new model needs custom postprocessing beyond that, extend `runInference` or add a model-specific postprocessing step in `src/utils/modelUtils.js`.
+
+## Development
+
+### Install
 
 ```bash
-git clone https://github.com/yourusername/tflite-model-playground.git
-cd tflite-model-playground
-
 npm install --force
+```
+
+### Run
+
+```bash
 npm run dev
+```
+
+### Build
+
+```bash
+npm run build
+```
